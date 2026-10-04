@@ -1,0 +1,171 @@
+from pyspark.sql import SparkSession, DataFrame
+
+from pyspark.sql.types import (
+    StructType,
+    StructField,
+    StringType,
+    IntegerType,
+    DoubleType,
+    DateType,
+    TimestampType
+)
+
+from pyspark.sql.functions import (
+    col,
+    to_timestamp,
+    when,
+    lit,
+    count,
+    sum
+)
+
+
+def load_ad_impressions(
+    spark: SparkSession,
+    path: str
+) -> DataFrame:
+
+    df = spark.read.csv(
+        path,
+        header=True,
+        inferSchema=True
+    )
+
+    df = df.withColumn(
+        "impression_ts",
+        to_timestamp(col("impression_ts"))
+    )
+
+    df = df.withColumn(
+        "watched_seconds",
+        col("watched_seconds").cast("double")
+    )
+
+    df = df.withColumn(
+        "ad_length_seconds",
+        col("ad_length_seconds").cast("double")
+    )
+
+    df = df.withColumn(
+        "spend_amount",
+        col("spend_amount").cast("double")
+    )
+
+    return df
+
+
+def join_campaign_metadata(
+    impressions_df: DataFrame,
+    campaigns_df: DataFrame
+) -> DataFrame:
+
+    return (
+        impressions_df
+        .join(
+            campaigns_df,
+            on="campaign_id",
+            how="inner"
+        )
+        .select(
+            impressions_df["impression_id"],
+            impressions_df["campaign_id"],
+            campaigns_df["campaign_name"],
+            impressions_df["impression_ts"],
+            impressions_df["watched_seconds"],
+            impressions_df["ad_length_seconds"],
+            impressions_df["spend_amount"],
+            impressions_df["delivery_status"],
+            impressions_df["clicked"]
+        )
+    )
+
+
+def add_engagement_metrics(
+    df: DataFrame
+) -> DataFrame:
+
+    return (
+        df
+        .withColumn(
+            "watch_pct",
+            when(
+                col("ad_length_seconds").isNull()
+                | (col("ad_length_seconds") <= 0),
+                lit(0.0)
+            )
+            .otherwise(
+                col("watched_seconds")
+                / col("ad_length_seconds")
+                * 100
+            )
+        )
+        .withColumn(
+            "engagement_band",
+            when(
+                col("watch_pct") >= 80,
+                "High"
+            )
+            .when(
+                col("watch_pct") >= 40,
+                "Medium"
+            )
+            .otherwise(
+                "Low"
+            )
+        )
+    )
+
+
+def campaign_performance_summary(
+    df: DataFrame
+) -> DataFrame:
+
+    return (
+        df
+        .filter(
+            col("delivery_status") == "DELIVERED"
+        )
+        .groupBy(
+            "campaign_id",
+            "campaign_name"
+        )
+        .agg(
+            count(col("impression_id")).alias(
+                "impression_count"
+            ),
+            sum(col("spend_amount")).alias(
+                "total_spend"
+            ),
+            sum(
+                when(
+                    col("clicked") == "Y",
+                    1
+                )
+                .otherwise(0)
+            ).alias(
+                "click_count"
+            )
+        )
+    )
+
+
+def top_n_campaigns_by_spend(
+    df: DataFrame,
+    n: int
+) -> DataFrame:
+
+    return (
+        df
+        .orderBy(
+            col("total_spend").desc(),
+            col("campaign_id").asc()
+        )
+        .limit(n)
+        .select(
+            "campaign_id",
+            "campaign_name",
+            "total_spend",
+            "impression_count",
+            "click_count"
+        )
+    )
