@@ -1,0 +1,116 @@
+from pyspark.sql import SparkSession, DataFrame
+
+from pyspark.sql.types import (
+    StructType,
+    StructField,
+    StringType,
+    IntegerType,
+    DoubleType,
+    DateType,
+    TimestampType
+)
+
+from pyspark.sql.functions import (
+    col,
+    to_date,
+    year,
+    month,
+    date_trunc,
+    sum
+)
+
+
+def load_music_tracks(
+    spark: SparkSession,
+    path: str
+) -> DataFrame:
+
+    df = spark.read.csv(
+        path,
+        header=True,
+        inferSchema=True
+    )
+
+    return df.withColumn(
+        "release_date",
+        to_date(col("release_date"))
+    )
+
+
+def fill_missing_genre(
+    df: DataFrame
+) -> DataFrame:
+
+    return df.fillna(
+        {"genre": "Uncategorized"}
+    )
+
+
+def add_release_calendar(
+    df: DataFrame
+) -> DataFrame:
+
+    return (
+        df
+        .withColumn(
+            "release_year",
+            year(col("release_date"))
+        )
+        .withColumn(
+            "release_month",
+            month(col("release_date"))
+        )
+        .withColumn(
+            "release_month_start",
+            date_trunc(
+                "month",
+                col("release_date")
+            )
+        )
+    )
+
+
+def unique_published_artists(
+    df: DataFrame
+) -> list:
+
+    return (
+        df
+        .filter(
+            col("status") == "Published"
+        )
+        .select("artist_name")
+        .distinct()
+        .orderBy(
+            col("artist_name").asc()
+        )
+        .rdd
+        .map(lambda row: row["artist_name"])
+        .collect()
+    )
+
+
+def top_n_genres_by_streams(
+    df: DataFrame,
+    n: int
+) -> DataFrame:
+
+    return (
+        df
+        .filter(
+            col("status") == "Published"
+        )
+        .groupBy("genre")
+        .agg(
+            sum("stream_count").alias("total_streams")
+        )
+        .orderBy(
+            col("total_streams").desc(),
+            col("genre").asc()
+        )
+        .limit(n)
+        .select(
+            "genre",
+            "total_streams"
+        )
+    )
