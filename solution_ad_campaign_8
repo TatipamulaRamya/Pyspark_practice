@@ -66,17 +66,6 @@ def join_campaign_metadata(
             on="campaign_id",
             how="inner"
         )
-        .select(
-            impressions_df["impression_id"],
-            impressions_df["campaign_id"],
-            campaigns_df["campaign_name"],
-            impressions_df["impression_ts"],
-            impressions_df["watched_seconds"],
-            impressions_df["ad_length_seconds"],
-            impressions_df["spend_amount"],
-            impressions_df["delivery_status"],
-            impressions_df["clicked"]
-        )
     )
 
 
