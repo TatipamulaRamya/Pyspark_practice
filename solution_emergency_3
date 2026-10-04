@@ -1,0 +1,116 @@
+from typing import Tuple, List
+
+from pyspark.sql import SparkSession, DataFrame
+
+from pyspark.sql.types import (
+    StructType,
+    StructField,
+    StringType
+)
+
+from pyspark.sql.functions import (
+    col,
+    unix_timestamp,
+    when,
+    avg
+)
+
+from pyspark.sql.window import Window
+
+
+def load_inline_triage_data(spark: SparkSession) -> DataFrame:
+    data = [
+        (
+            "C001",
+            "ER",
+            "2026-09-01 08:00:00",
+            "2026-09-01 08:25:00",
+            "High",
+            "ACTIVE"
+        ),
+        (
+            "C002",
+            "Trauma",
+            "2026-09-01 08:10:00",
+            "2026-09-01 08:05:00",
+            "Critical",
+            "ACTIVE"
+        ),
+        (
+            "C003",
+            "Pediatrics",
+            "2026-09-01 09:00:00",
+            "2026-09-01 09:45:00",
+            "Low",
+            "ACTIVE"
+        ),
+        (
+            "C004",
+            "ER",
+            "2026-09-01 09:30:00",
+            "2026-09-01 10:00:00",
+            "High",
+            "CLOSED"
+        )
+    ]
+
+    schema = StructType([
+        StructField("case_id", StringType(), True),
+        StructField("department", StringType(), True),
+        StructField("arrival_time", StringType(), True),
+        StructField("doctor_start_time", StringType(), True),
+        StructField("priority", StringType(), True),
+        StructField("status", StringType(), True)
+    ])
+
+    return spark.createDataFrame(data, schema)
+
+
+def compute_wait_minutes(df: DataFrame) -> DataFrame:
+    wait_seconds = (
+        unix_timestamp(col("doctor_start_time"))
+        - unix_timestamp(col("arrival_time"))
+    )
+
+    return df.withColumn(
+        "wait_minutes",
+        when(
+            wait_seconds < 0,
+            0
+        ).otherwise(
+            wait_seconds / 60
+        )
+    )
+
+
+def filter_priority_cases(df: DataFrame) -> DataFrame:
+    return df.filter(
+        col("priority").isin("Critical", "High")
+        & col("wait_minutes").isNotNull()
+    )
+
+
+def average_wait_by_department(df: DataFrame) -> DataFrame:
+    return (
+        df.filter(
+            col("wait_minutes").isNotNull()
+        )
+        .groupBy("department")
+        .agg(
+            avg(col("wait_minutes")).alias("avg_wait_minutes")
+        )
+    )
+
+
+def list_active_departments(df: DataFrame) -> list:
+    return (
+        df.filter(
+            col("status") == "ACTIVE"
+        )
+        .select("department")
+        .distinct()
+        .orderBy(col("department").asc())
+        .rdd
+        .flatMap(lambda row: row)
+        .collect()
+    )
