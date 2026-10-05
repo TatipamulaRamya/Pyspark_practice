@@ -1,29 +1,8 @@
 from typing import Tuple, List
-
 from pyspark.sql import SparkSession, DataFrame
-
-from pyspark.sql.types import (
-    StructType,
-    StructField,
-    StringType,
-    IntegerType,
-    DoubleType,
-    DateType,
-    TimestampType
-)
-
-from pyspark.sql.functions import (
-    col,
-    to_timestamp,
-    cast,
-    when,
-    row_number,
-    avg,
-    count
-)
-
+from pyspark.sql.types import StructType,StructField,StringType
+from pyspark.sql.functions import col,to_timestamp,when,row_number,avg,count
 from pyspark.sql.window import Window
-
 
 def define_observation_schema() -> StructType:
     return StructType([
@@ -35,103 +14,51 @@ def define_observation_schema() -> StructType:
         StructField("device_status", StringType(), True)
     ])
 
-
-def load_monitoring_data(
-    spark: SparkSession,
-    observations_path: str,
-    patients_path: str,
-    schema: StructType
-) -> tuple:
-
-    observations_df = spark.read.csv(
-        observations_path,
-        header=True,
-        schema=schema
-    )
-
+def load_monitoring_data(spark: SparkSession, observations_path: str, patients_path: str, schema: StructType) -> tuple:
+    observations_df=spark.read.csv(observations_path,header=True,schema=schema)
     observations_df = (
-        observations_df
-        .withColumn(
-            "reading_ts",
-            to_timestamp(col("reading_ts"))
-        )
-        .withColumn(
-            "systolic",
-            col("systolic").cast("int")
-        )
-        .withColumn(
-            "heart_rate",
-            col("heart_rate").cast("int")
-        )
+        observations_df.withColumn("reading_ts",to_timestamp(col("reading_ts")))
+        .withColumn("systolic",col("systolic").cast("int"))
+        .withColumn("heart_rate",col("heart_rate").cast("int"))
     )
-
-    patients_df = spark.read.csv(
-        patients_path,
-        header=True,
-        inferSchema=True
-    )
-
+    patients_df = spark.read.csv(patients_path,header=True,inferSchema=True)
     return observations_df, patients_df
 
-
 def classify_readings(df: DataFrame) -> DataFrame:
-    return df.withColumn(
-        "alert_level",
-        when(
-            (col("systolic") >= 180) |
-            (col("heart_rate") >= 120),
-            "Critical"
+    df=(
+        df.withColumn(
+            "alert_level",
+            when(
+                (col("systolic")>=180)|(col("heart_rate")>=130),"Critical"
+            ).when(
+                (col("systolic")>=140)|(col("heart_rate")>=100),"Warning"
+            ).otherwise("Normal")
         )
-        .when(
-            (col("systolic") >= 140) |
-            (col("heart_rate") >= 100),
-            "Warning"
-        )
-        .otherwise("Normal")
     )
-
+    return df 
 
 def latest_reading_per_patient(df: DataFrame) -> DataFrame:
-    window_spec = Window.partitionBy(
-        "patient_id"
-    ).orderBy(
-        col("reading_ts").desc()
+    row_window=(Window.partitionBy("patient_id")
+                .orderBy(col("reading_ts").desc())
     )
-
-    return (
-        df.withColumn(
-            "row_num",
-            row_number().over(window_spec)
-        )
-        .filter(
-            col("row_num") == 1
-        )
+    df=df.withColumn(
+        "row_number",
+        row_number().over(row_window)
     )
+    df=df.filter(col("row_number")==1)
+    return df
 
-
-def care_team_alert_summary(
-    observations_df: DataFrame,
-    patients_df: DataFrame
-) -> DataFrame:
-
-    return (
-        observations_df
-        .join(
-            patients_df,
-            on="patient_id",
-            how="inner"
-        )
-        .filter(
-            col("alert_level").isin(
-                "Warning",
-                "Critical"
-            )
-        )
-        .groupBy(
-            "care_team"
-        )
+def care_team_alert_summary(observations_df: DataFrame, patients_df: DataFrame) -> DataFrame:
+    df=observations_df.join(
+        patients_df,on="patient_id",how="inner"
+    )
+    df=(
+        df.filter(col("alert_level").isin("Critical","Warning"))
+        .groupBy("care_team")
         .agg(
-            count("observation_id").alias("alert_count"),
-            avg("heart_rate").alias("avg_heart_rate")
+            count(col("observation_id")).alias("alert_count"),
+            avg(col("heart_rate")).alias("avg_heart_rate")
         )
     )
+    return df
+
