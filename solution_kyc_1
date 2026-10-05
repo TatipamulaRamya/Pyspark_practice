@@ -30,6 +30,7 @@ def filter_review_customers(df: DataFrame, min_score: int, max_score: int) -> Da
     return df
 
 def risk_score_statistics(df: DataFrame) -> dict:
+    df=df.filter(col("risk_score").isNotNull())
     df=df.agg(
         min(col("risk_score")).alias("min_score"),
         max(col("risk_score")).alias("max_score"),
