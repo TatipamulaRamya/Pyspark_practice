@@ -1,105 +1,66 @@
 from typing import Tuple, List
-
 from pyspark.sql import SparkSession, DataFrame
-
-from pyspark.sql.types import (
-    StructType,
-    StructField,
-    StringType,
-    IntegerType,
-    DoubleType,
-    DateType
-)
-
-from pyspark.sql.functions import (
-    col,
-    trim,
-    to_date,
-    min,
-    max,
-    avg,
-    count
-)
-
+from pyspark.sql.types import *
+from pyspark.sql.functions import to_date,col,trim,avg,min,max,count
 from pyspark.sql.window import Window
 
 def load_kyc_data(spark: SparkSession, path: str) -> DataFrame:
-    df = spark.read.csv(
-        path,
-        header=True,
-        inferSchema=True
+    df=spark.read.csv(path,header=True,inferSchema=True)
+    df=df.withColumn(
+        "onboarding_date",to_date("onboarding_date")
     )
-
-    df = df.withColumn(
-        "onboarding_date",
-        to_date("onboarding_date")
-    )
-
     return df
 
-
 def remove_invalid_emails(df: DataFrame) -> DataFrame:
-    df = df.withColumn(
-        "email",
-        trim("email")
+    df=df.withColumn("email",trim("email"))
+    df=(
+        df.filter(
+            (col("email").isNotNull())&
+            (col("email")!="")&
+            (col("email").rlike(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$"))
+        )
     )
+    return df
 
-    return df.filter(
-        col("email").isNotNull()
-        & (col("email") != "")
-        & col("email").rlike(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
+def filter_review_customers(df: DataFrame, min_score: int, max_score: int) -> DataFrame:
+    df=df.filter(
+        (col("risk_score").between(min_score,max_score))&
+        (col("kyc_status").isin("PENDING","REVIEW"))
     )
-
-
-def filter_review_customers(
-    df: DataFrame,
-    min_score: int,
-    max_score: int
-) -> DataFrame:
-
-    return df.filter(
-        col("risk_score").between(min_score, max_score)
-        & col("kyc_status").isin("PENDING", "REVIEW")
-    )
-
+    return df
 
 def risk_score_statistics(df: DataFrame) -> dict:
-    result = df.select(
-        min("risk_score").alias("min_score"),
-        max("risk_score").alias("max_score"),
-        avg("risk_score").alias("avg_score"),
-        count("risk_score").alias("total_customers")
+    df=df.agg(
+        min(col("risk_score")).alias("min_score"),
+        max(col("risk_score")).alias("max_score"),
+        avg(col("risk_score")).alias("avg_score"),
+        count(col("risk_score")).alias("total_customers")
     ).first()
-
     return {
-        "min_score": result["min_score"],
-        "max_score": result["max_score"],
-        "avg_score": result["avg_score"],
-        "total_customers": result["total_customers"]
+        "min_score":df["min_score"],
+        "max_score":df["max_score"],
+        "avg_score":df["avg_score"],
+        "total_customers":df["total_customers"]
     }
 
-
 def city_highest_average_risk(df: DataFrame) -> tuple:
-    result = (
-        df.filter(
-            col("city").isNotNull()
-            & col("risk_score").isNotNull()
-        )
-        .groupBy("city")
-        .agg(
-            avg("risk_score").alias("avg_score")
-        )
-        .orderBy(
+    df=df.filter(
+        (col("city").isNotNull())&
+        (col("risk_score").isNotNull())
+    )
+    df=(
+        df.groupBy("city")
+        .agg(avg(col("risk_score")).alias("avg_score"))
+        .sort(
             col("avg_score").desc(),
             col("city").asc()
-        )
-        .first()
+        ).first()
     )
-
-    if result is None:
-        return ("", 0.0)
-
+    if not df:
+        return ("",0.0)
     return (
-        result["city"],
-        float(result["avg_score"])
+        df["city"],
+        float(df["avg_score"])
     )
+    
+
